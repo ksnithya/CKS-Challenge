@@ -1,0 +1,362 @@
+Challenge4:
+Step 1:
+---------
+audit-log-path set to '/var/log/kubernetes/audit/audit.log'
+
+1.1. edit kube-apiserver.yaml file to add audit-log-path. Add below entries to kube-apiserver.yaml file
+
+root@controlplane ~ ➜  cd /etc/kubernetes/manifests/
+
+root@controlplane /etc/kubernetes/manifests ➜  vi kube-apiserver.yaml
+  - command:
+    - kube-apiserver
+     - --audit-log-path=/var/log/kubernetes/audit/audit.log
+    volumeMounts:
+    - mountPath: /var/log/kubernetes/audit
+      name: audit-log
+      readOnly: false
+  volumes:
+  - name: audit-log
+    hostPath:
+      path: /var/log/kubernetes/audit
+      type: DirectoryOrCreate
+
+Step2:
+-------
+Use a volume called 'audit' that will mount only the file '/etc/kubernetes/audit-policy.yaml' from the controlplane inside the api server pod in a read only mode.
+Create a single rule in the audit policy that will record events for the 'two' objects depicting abnormal behaviour in the 'citadel' namespace. 
+This rule should however be applied to all 'three' namespaces shown in the diagram at a 'metadata' level. Omit the 'RequestReceived' stage.
+
+2.1. .
+root@controlplane ~ ➜  cd /etc/kubernetes/
+
+root@controlplane /etc/kubernetes ➜  ls -l
+total 36
+-rw------- 1 root root 5640 Mar 21 12:37 admin.conf
+-rw------- 1 root root 5674 Mar 21 12:37 controller-manager.conf
+-rw------- 1 root root 1984 Mar 21 12:37 kubelet.conf
+drwxr-xr-x 2 root root 4096 Mar 21 12:37 manifests
+drwxr-xr-x 4 root root 4096 Mar 21 12:38 pki
+-rw------- 1 root root 5622 Mar 21 12:37 scheduler.conf
+
+root@controlplane /etc/kubernetes ➜  vi audit-policy.yaml
+
+root@controlplane /etc/kubernetes ➜  pwd
+/etc/kubernetes
+
+root@controlplane /etc/kubernetes ➜  cat audit-policy.yaml 
+apiVersion: audit.k8s.io/v1
+kind: Policy
+# Don't generate audit events for all requests in RequestReceived stage.
+omitStages:
+  - "RequestReceived"
+rules:
+- level: Metadata
+  resources:
+  - resources: ["pods", "configmaps"]
+  namespaces: ["omega", "citadel", "eden-prime"]
+
+2.2. Now we can update the kube-apiserver.yml file to use above log files.
+root@controlplane /etc/kubernetes ➜  cd manifests/
+
+root@controlplane /etc/kubernetes/manifests ➜  vi kube-apiserver.yaml 
+
+root@controlplane /etc/kubernetes/manifests ➜  cat kube-apiserver.yaml 
+root@controlplane /etc/kubernetes/manifests ➜  cat kube-apiserver.yaml 
+apiVersion: v1
+kind: Pod
+metadata:
+  annotations:
+    kubeadm.kubernetes.io/kube-apiserver.advertise-address.endpoint: 192.168.121.249:6443
+  creationTimestamp: null
+  labels:
+    component: kube-apiserver
+    tier: control-plane
+  name: kube-apiserver
+  namespace: kube-system
+spec:
+  containers:
+  - command:
+    - kube-apiserver
+    - --advertise-address=192.168.121.249
+    - --allow-privileged=true
+    - --authorization-mode=Node,RBAC
+    - --client-ca-file=/etc/kubernetes/pki/ca.crt
+    - --enable-admission-plugins=NodeRestriction
+    - --enable-bootstrap-token-auth=true
+    - --etcd-cafile=/etc/kubernetes/pki/etcd/ca.crt
+    - --etcd-certfile=/etc/kubernetes/pki/apiserver-etcd-client.crt
+    - --etcd-keyfile=/etc/kubernetes/pki/apiserver-etcd-client.key
+    - --etcd-servers=https://127.0.0.1:2379
+    - --kubelet-client-certificate=/etc/kubernetes/pki/apiserver-kubelet-client.crt
+    - --kubelet-client-key=/etc/kubernetes/pki/apiserver-kubelet-client.key
+    - --kubelet-preferred-address-types=InternalIP,ExternalIP,Hostname
+    - --proxy-client-cert-file=/etc/kubernetes/pki/front-proxy-client.crt
+    - --proxy-client-key-file=/etc/kubernetes/pki/front-proxy-client.key
+    - --requestheader-allowed-names=front-proxy-client
+    - --requestheader-client-ca-file=/etc/kubernetes/pki/front-proxy-ca.crt
+    - --requestheader-extra-headers-prefix=X-Remote-Extra-
+    - --requestheader-group-headers=X-Remote-Group
+    - --requestheader-username-headers=X-Remote-User
+    - --secure-port=6443
+    - --service-account-issuer=https://kubernetes.default.svc.cluster.local
+    - --service-account-key-file=/etc/kubernetes/pki/sa.pub
+    - --service-account-signing-key-file=/etc/kubernetes/pki/sa.key
+    - --service-cluster-ip-range=10.96.0.0/12
+    - --tls-cert-file=/etc/kubernetes/pki/apiserver.crt
+    - --tls-private-key-file=/etc/kubernetes/pki/apiserver.key
+    - --audit-policy-file=/etc/kubernetes/audit-policy.yaml
+    - --audit-log-path=/var/log/kubernetes/audit/audit.log
+    image: k8s.gcr.io/kube-apiserver:v1.23.0
+    imagePullPolicy: IfNotPresent
+    livenessProbe:
+      failureThreshold: 8
+      httpGet:
+        host: 192.168.121.249
+        path: /livez
+        port: 6443
+        scheme: HTTPS
+      initialDelaySeconds: 10
+      periodSeconds: 10
+      timeoutSeconds: 15
+    name: kube-apiserver
+    readinessProbe:
+      failureThreshold: 3
+      httpGet:
+        host: 192.168.121.249
+        path: /readyz
+        port: 6443
+        scheme: HTTPS
+      periodSeconds: 1
+      timeoutSeconds: 15
+    resources:
+      requests:
+        cpu: 250m
+    startupProbe:
+      failureThreshold: 24
+      httpGet:
+        host: 192.168.121.249
+        path: /livez
+        port: 6443
+        scheme: HTTPS
+      initialDelaySeconds: 10
+      periodSeconds: 10
+      timeoutSeconds: 15
+    volumeMounts:
+    - mountPath: /etc/ssl/certs
+      name: ca-certs
+      readOnly: true
+    - mountPath: /etc/ca-certificates
+      name: etc-ca-certificates
+      readOnly: true
+    - mountPath: /etc/kubernetes/pki
+      name: k8s-certs
+      readOnly: true
+    - mountPath: /usr/local/share/ca-certificates
+      name: usr-local-share-ca-certificates
+      readOnly: true
+    - mountPath: /usr/share/ca-certificates
+      name: usr-share-ca-certificates
+      readOnly: true
+    - mountPath: /etc/kubernetes/audit-policy.yaml
+      name: audit
+      readOnly: true
+    - mountPath: /var/log/kubernetes/audit/
+      name: audit-log
+      readOnly: false
+  hostNetwork: true
+  priorityClassName: system-node-critical
+  securityContext:
+    seccompProfile:
+      type: RuntimeDefault
+  volumes:
+  - hostPath:
+      path: /etc/ssl/certs
+      type: DirectoryOrCreate
+    name: ca-certs
+  - hostPath:
+      path: /etc/ca-certificates
+      type: DirectoryOrCreate
+    name: etc-ca-certificates
+  - hostPath:
+      path: /etc/kubernetes/pki
+      type: DirectoryOrCreate
+    name: k8s-certs
+  - hostPath:
+      path: /usr/local/share/ca-certificates
+      type: DirectoryOrCreate
+    name: usr-local-share-ca-certificates
+  - hostPath:
+      path: /usr/share/ca-certificates
+      type: DirectoryOrCreate
+    name: usr-share-ca-certificates
+  - name: audit
+    hostPath:
+      path: /etc/kubernetes/audit-policy.yaml
+      type: File
+  - name: audit-log
+    hostPath:
+      path: /var/log/kubernetes/audit/
+      type: DirectoryOrCreate
+status: {}
+
+root@controlplane /etc/kubernetes/manifests ➜  
+
+root@controlplane /etc/kubernetes/manifests ✖ systemctl restart kubelet
+
+Step 3:
+Install the 'falco' utility on the controlplane node and start it as a systemd service
+
+3.1. Follow the installation steps in https://v0-26.falco.org/docs/getting-started/installation/
+
+curl -s https://falco.org/repo/falcosecurity-3672BA8F.asc | apt-key add -
+echo "deb https://dl.bintray.com/falcosecurity/deb stable main" | tee -a /etc/apt/sources.list.d/falcosecurity.list
+apt-get update -y
+apt-get -y install linux-headers-$(uname -r)
+apt-get install -y falco
+
+systemctl enable falco
+systemctl restart falco
+
+Step 4:
+
+Configure falco to save the event output to the file '/opt/falco.log'
+4.1. Go to falco yaml file and update the file_output entry
+root@controlplane /etc/kubernetes/manifests ➜  cd /etc/falco/
+
+root@controlplane /etc/falco ➜  ls -l
+total 200
+-rw-r--r-- 1 root root  12400 Mar  9  2022 aws_cloudtrail_rules.yaml
+-rw-r--r-- 1 root root   1136 Mar  9  2022 falco_rules.local.yaml
+-rw-r--r-- 1 root root 133017 Mar  9  2022 falco_rules.yaml
+-rw-r--r-- 1 root root  11384 Mar  9  2022 falco.yaml
+-rw-r--r-- 1 root root  27287 Mar  9  2022 k8s_audit_rules.yaml
+drwxr-xr-x 2 root root   4096 Mar 21 16:01 rules.available
+drwxr-xr-x 2 root root   4096 Mar  9  2022 rules.d
+
+root@controlplane /etc/falco ➜  vi falco.yaml 
+file_output:
+  enabled: true
+  keep_alive: false
+  filename: /opt/falco.log
+
+root@controlplane /etc/falco ➜  systemctl restart falco
+
+root@controlplane /etc/falco ➜  
+
+Step 5:
+--------
+
+Inspect the API server audit logs and identify the user responsible for the abnormal behaviour seen in the 'citadel' namespace. Save the name of the 'user', 'role' and 'rolebinding' responsible for the event to the file '/opt/blacklist_users' file (comma separated and in this specific order).
+Inspect the 'falco' logs and identify the pod that has events generated because of packages being updated on it. Save the namespace and the pod name in the file '/opt/compromised_pods' (comma separated - namespace followed by the pod name)
+
+5.1. 
+cd /var/log/kubernetes/audit/
+ls -l
+cat audit.log |grep -i citadel| egrep -v "\"get|\"watch|\"list"|jq
+echo "agent-smith,important_role_do_not_delete,important_binding_do_not_delete" > /opt/blacklist_users
+cat /opt/blacklist_users
+
+5.2. chek falco log under /opt/falco.log
+
+root@controlplane /opt ➜ cat /opt/falco.log
+16:22:46.660597885: Error Package management process launched in container (user=root user_loginuid=-1 command=apt install nginx container_id=711acc13a243 container_name=k8s_eden-software2_eden-software2_eden-prime_87517978-ae25-436f-978c-0fe3e488df36_0 image=ubuntu:latest)
+
+root@controlplane /opt ➜  ps -ef|grep 711acc13a243
+root      6728   761  0 15:30 ?        00:00:01 containerd-shim -namespace moby -workdir /var/lib/containerd/io.containerd.runtime.v1.linux/moby/711acc13a243ff5b040f13f9e759e8c0141bb59390dde15e59958da11ca1e114 -address /run/containerd/containerd.sock -containerd-binary /usr/bin/containerd -runtime-root /var/run/docker/runtime-runc -systemd-cgroup -debug
+root     18381  7064  0 16:23 pts/0    00:00:00 grep --color=auto 711acc13a243
+
+root@controlplane /opt ➜  crictl ps|grep 711acc13a243
+711acc13a243f       ubuntu@sha256:67211c14fa74f070d27cc59d69a7fa9aeff8e28ea118ef3babc295a0428a6d21                   53 minutes ago      Running             eden-software2            0                   9651fb6c1fc64
+
+root@controlplane /opt ➜  crictl pod|grep 711acc13a243
+No help topic for 'pod'
+
+root@controlplane /opt ✖ crictl pods|grep 711acc13a243
+
+root@controlplane /opt ✖ crictl pods|grep 9651fb6c1fc64
+9651fb6c1fc64       54 minutes ago      Ready               eden-software2                         eden-prime          0                   (default)
+
+root@controlplane /opt ➜  echo "eden-prime,eden-software2" >/opt/compromised_pods
+
+Step 6:
+--------
+Delete pods belonging to the 'eden-prime' namespace that were flagged in the 'Security Report' file '/opt/compromised_pods'. Do not delete the non-compromised pods!
+
+root@controlplane log/kubernetes/audit ➜  cat /opt/compromised_pods
+eden-prime,eden-software2
+
+root@controlplane log/kubernetes/audit ➜  kubectl get all -n eden-prime 
+NAME                           READY   STATUS    RESTARTS   AGE
+pod/eden-fe-77574c68cd-8d889   1/1     Running   0          14m
+pod/eden-software1             1/1     Running   0          14m
+pod/eden-software2             1/1     Running   0          14m
+pod/eden-software3             1/1     Running   0          14m
+
+NAME                      READY   UP-TO-DATE   AVAILABLE   AGE
+deployment.apps/eden-fe   1/1     1            1           14m
+
+NAME                                 DESIRED   CURRENT   READY   AGE
+replicaset.apps/eden-fe-77574c68cd   1         1         1       14m
+
+root@controlplane log/kubernetes/audit ➜  kubectl delete pod -n eden-prime eden-software2 
+pod "eden-software2" deleted
+
+root@controlplane log/kubernetes/audit ➜  
+
+Step 7:
+--------
+
+Delete the rolebinding causing the constant deletion and creation of the configmaps and pods in this namespace. Do not delete any other rolebinding! - citadel
+root@controlplane log/kubernetes/audit ➜  kubectl get rolebinding -n citadel 
+NAME                              ROLE                                AGE
+dev1                              Role/dev1                           17m
+important_binding_do_not_delete   Role/important_role_do_not_delete   17m
+important_citadel_user_binding    Role/important_citadel_user_role    17m
+
+root@controlplane log/kubernetes/audit ➜  cat /opt/blacklist_users
+agent-smith,important_role_do_not_delete,important_binding_do_not_delete
+
+root@controlplane log/kubernetes/audit ➜  kubectl get all -n citadel 
+NAME               READY   STATUS              RESTARTS   AGE
+pod/webapp-color   0/1     ContainerCreating   0          1s
+
+NAME                   TYPE       CLUSTER-IP      EXTERNAL-IP   PORT(S)          AGE
+service/webapp-color   NodePort   10.109.106.41   <none>        8080:32192/TCP   22m
+
+root@controlplane log/kubernetes/audit ➜  kubectl get role -n citadel 
+NAME                           CREATED AT
+dev1                           2023-03-21T16:31:37Z
+important_citadel_user_role    2023-03-21T16:31:38Z
+important_role_do_not_delete   2023-03-21T16:31:36Z
+
+root@controlplane log/kubernetes/audit ➜  kubectl get rolebinding -n citadel 
+NAME                              ROLE                                AGE
+dev1                              Role/dev1                           22m
+important_binding_do_not_delete   Role/important_role_do_not_delete   22m
+important_citadel_user_binding    Role/important_citadel_user_role    22m
+
+root@controlplane log/kubernetes/audit ➜  kubectl get cm -n citadel 
+NAME                DATA   AGE
+kube-root-ca.crt    1      23m
+webapp-config-map   1      3s
+
+root@controlplane log/kubernetes/audit ➜  kubectl get cm -n citadel webapp-config-map -o yaml
+apiVersion: v1
+data:
+  APP_COLOR: red
+kind: ConfigMap
+metadata:
+  creationTimestamp: "2023-03-21T16:54:41Z"
+  name: webapp-config-map
+  namespace: citadel
+  resourceVersion: "3699"
+  uid: 41ea4f86-d119-4430-9d84-6868c9463a31
+
+root@controlplane log/kubernetes/audit ➜  kubectl delete role important_role_do_not_delete -n citadel 
+role.rbac.authorization.k8s.io "important_role_do_not_delete" deleted
+
+root@controlplane log/kubernetes/audit ➜  kubectl delete rolebinding important_binding_do_not_delete -n citadel 
+rolebinding.rbac.authorization.k8s.io "important_binding_do_not_delete" deleted
+
+root@controlplane log/kubernetes/audit ➜  

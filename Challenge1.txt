@@ -1,0 +1,341 @@
+Challenge 1:
+
+Step 1:
+First we work on pv and pvc.
+
+PV already exist and we examin it. It uses access mode RWX.
+root@controlplane ~ ➜  k get pv -n alpha
+NAME       CAPACITY   ACCESS MODES   RECLAIM POLICY   STATUS      CLAIM   STORAGECLASS    REASON   AGE
+alpha-pv   1Gi        RWX            Delete           Available           local-storage            7m11s
+
+Step 2:
+'alpha-pvc' should be bound to 'alpha-pv'. Delete and Re-create it if necessary.
+
+PVC exist and it is in pending state. We will fix it. We will examin the configuration of PVC. It is using RWO mode. We will update it to RWX mode.
+
+root@controlplane ~ ➜  k get pvc -n alpha
+NAME        STATUS    VOLUME   CAPACITY   ACCESS MODES   STORAGECLASS    AGE
+alpha-pvc   Pending                                      local-storage   7m22s
+
+root@controlplane ~ ➜  kubectl edit pvc -n alpha
+error: persistentvolumeclaims "alpha-pvc" is invalid
+A copy of your changes has been stored to "/tmp/kubectl-edit-2807199470.yaml"
+error: Edit cancelled, no valid changes were saved.
+
+root@controlplane ~ ✖ cat /tmp/kubectl-edit-2807199470.yaml
+# Please edit the object below. Lines beginning with a '#' will be ignored,
+# and an empty file will abort the edit. If an error occurs while saving this file will be
+# reopened with the relevant failures.
+#
+# persistentvolumeclaims "alpha-pvc" was not valid:
+# * spec: Forbidden: spec is immutable after creation except resources.requests for bound claims
+#   core.PersistentVolumeClaimSpec{
+# -     AccessModes: []core.PersistentVolumeAccessMode{"ReadWriteMany"},
+# +     AccessModes: []core.PersistentVolumeAccessMode{"ReadWriteOnce"},
+#       Selector:    nil,
+#       Resources:   {Requests: {s"storage": {i: {...}, s: "1Gi", Format: "BinarySI"}}},
+#       ... // 5 identical fields
+#   }
+
+#
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  annotations:
+    kubectl.kubernetes.io/last-applied-configuration: |
+      {"apiVersion":"v1","kind":"PersistentVolumeClaim","metadata":{"annotations":{},"name":"alpha-pvc","namespace":"alpha"},"spec":{"accessModes":["ReadWriteOnce"],"resources":{"requests":{"storage":"1Gi"}},"storageClassName":"local-storage"}}
+  creationTimestamp: "2023-03-21T07:46:19Z"
+  finalizers:
+  - kubernetes.io/pvc-protection
+  name: alpha-pvc
+  namespace: alpha
+  resourceVersion: "594"
+  uid: a7c8caa3-2456-462d-bcc2-5fcb309e312d
+spec:
+  accessModes:
+  - ReadWriteMany
+  resources:
+    requests:
+      storage: 1Gi
+  storageClassName: local-storage
+  volumeMode: Filesystem
+status:
+  phase: Pending
+
+root@controlplane ~ ➜  
+
+root@controlplane ~ ➜  kubectl replace -f /tmp/kubectl-edit-2807199470.yaml --force
+persistentvolumeclaim "alpha-pvc" deleted
+persistentvolumeclaim/alpha-pvc replaced
+
+Now PVC is in bound state.
+root@controlplane ~ ➜  kubectl get pvc -n alpha
+NAME        STATUS   VOLUME     CAPACITY   ACCESS MODES   STORAGECLASS    AGE
+alpha-pvc   Bound    alpha-pv   1Gi        RWX            local-storage   9s
+
+root@controlplane ~ ➜  
+
+Step 3:
+--------
+Create a deployment called 'alpha-xyz' that uses the image with the least 'CRITICAL' vulnerabilities? (Use the sample YAML file located at '/root/alpha-xyz.yaml' to create the deployment.
+ Please make sure to use the same names and labels specified in this sample YAML file!)
+
+Deployment has exactly '1' ready replica
+
+'data-volume' is mounted at '/usr/share/nginx/html' on the pod
+
+3.1. First we need to find imge with least Critical. Deployment file uses the image nginx.
+root@controlplane ~ ✖ cat alpha-xyz.yaml|grep -i name
+  name: alpha-xyz
+  namespace: alpha
+        name: nginx
+
+root@controlplane ~ ➜  
+
+3.2. We need to find which image has least critical.
+
+root@controlplane ~ ➜  for i in `docker images|grep -i nginx|awk '{print $1":"$2}'`; do echo $i;trivy image -s CRITICAL $i|grep -i critical; done
+bitnami/nginx:latest
+Total: 3 (CRITICAL: 3)
+| libc-bin | CVE-2019-1010022 | CRITICAL | 2.31-13+deb11u5   |               | glibc: stack guard protection bypass    |
+nginx:alpine
+Total: 0 (CRITICAL: 0)
+nginx:<none>
+2023/03/21 08:03:18 failed to initialize options: invalid image: could not parse reference: nginx:<none>
+nginx:latest
+Total: 27 (CRITICAL: 27)
+| curl          | CVE-2021-22945   | CRITICAL | 7.74.0-1.3+deb11u1 | 7.74.0-1.3+deb11u2      | curl: use-after-free and                |
+nginx:1.17
+Total: 43 (CRITICAL: 43)
+| dpkg         | CVE-2022-1664    | CRITICAL | 1.19.7                    | 1.19.8                  | Dagster-cloud 1.1.4 updates             |
+nginx:1.16
+Total: 43 (CRITICAL: 43)
+| dpkg         | CVE-2022-1664    | CRITICAL | 1.19.7                    | 1.19.8                  | Dagster-cloud 1.1.4 updates             |
+nginx:1.14
+Total: 64 (CRITICAL: 64)
+| dpkg              | CVE-2022-1664    | CRITICAL | 1.18.25                | 1.18.26                | Dagster-cloud 1.1.4 updates             |
+nginx:1.13
+Total: 85 (CRITICAL: 85)
+| dpkg              | CVE-2022-1664    | CRITICAL | 1.18.24                | 1.18.26                | Dagster-cloud 1.1.4 updates             |
+
+nginx:alpine - has 0 critical. So we use this image.
+
+3.3. Now we can update the deployment yaml file with image name and we can use the already created pv and pvc.
+
+root@controlplane ~ ➜  cat alpha-xyz.yaml 
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  creationTimestamp: null
+  labels:
+    app: alpha-xyz
+  name: alpha-xyz
+  namespace: alpha
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: alpha-xyz
+  strategy: {}
+  template:
+    metadata:
+      creationTimestamp: null
+      labels:
+        app: alpha-xyz
+    spec:
+      containers:
+      - image: nginx:alpine
+        name: nginx
+        volumeMounts:
+          - name: data-volume
+            mountPath: /usr/share/nginx/html
+      volumes:
+        - name: data-volume
+          persistentVolumeClaim:
+            claimName: alpha-pvc
+
+root@controlplane ~ ➜  kubectl create -f alpha-xyz.yaml 
+deployment.apps/alpha-xyz created
+
+root@controlplane ~ ➜  kubectl get deploy,pod -n alpha
+NAME                        READY   UP-TO-DATE   AVAILABLE   AGE
+deployment.apps/alpha-xyz   1/1     1            1           12s
+
+NAME                             READY   STATUS    RESTARTS   AGE
+pod/alpha-xyz-75ddb5d4b6-mcsff   1/1     Running   0          12s
+pod/external                     1/1     Running   0          36m
+pod/middleware                   1/1     Running   0          36m
+
+root@controlplane ~ ➜  
+
+Step 4:
+--------
+Expose the 'alpha-xyz' as a 'ClusterIP' type service called 'alpha-svc'
+
+'alpha-svc' should be exposed on 'port: 80' and 'targetPort: 80'
+
+4.1. Mow we create service alpha-svc for deployment alpha-xyz
+
+root@controlplane ~ ➜  kubectl expose deploy -n alpha alpha-xyz --port=80 --target-port=80 --name=alpha-svc
+service/alpha-svc exposed
+
+root@controlplane ~ ➜  kubectl get svc -n alpha
+NAME        TYPE        CLUSTER-IP     EXTERNAL-IP   PORT(S)   AGE
+alpha-svc   ClusterIP   10.104.71.17   <none>        80/TCP    14s
+
+root@controlplane ~ ➜  
+
+Step 5:
+--------
+
+Move the AppArmor profile '/root/usr.sbin.nginx' to '/etc/apparmor.d/usr.sbin.nginx' on the controlplane node
+
+Load the 'AppArmor` profile called 'custom-nginx' and ensure it is enforced.
+
+5.1. Now we setup custom-nginx profile.
+
+root@controlplane ~ ➜  cp usr.sbin.nginx /etc/apparmor.d/
+
+root@controlplane ~ ➜  apparmor_status |grep nginx
+
+root@controlplane ~ ✖  apparmor_parser -a /etc/apparmor.d/usr.sbin.nginx
+
+root@controlplane ~ ➜  apparmor_status |grep nginx
+   custom-nginx
+
+root@controlplane ~ ➜  
+
+Step 6:
+---------
+'alpha-xyz' deployment uses the 'custom-nginx' apparmor profile (applied to container called 'nginx')
+
+6.1. Now we need to update the deployment with custom-nginx profile. Edit the deployment and add the annotation in pod template.
+
+root@controlplane ~ ➜  kubectl edit deploy -n alpha alpha-xyz
+apiVersion: v1
+items:
+- apiVersion: apps/v1
+  kind: Deployment
+  metadata:
+    annotations:
+      deployment.kubernetes.io/revision: "2"
+    creationTimestamp: "2023-03-21T07:07:09Z"
+    generation: 2
+    labels:
+      app: alpha-xyz
+    name: alpha-xyz
+    namespace: alpha
+    resourceVersion: "4684"
+    uid: 0233cc05-4e20-43a6-91d8-9f68be7b51ba
+  spec:
+    progressDeadlineSeconds: 600
+    replicas: 1
+    revisionHistoryLimit: 10
+    selector:
+      matchLabels:
+        app: alpha-xyz
+    strategy:
+      rollingUpdate:
+        maxSurge: 25%
+        maxUnavailable: 25%
+      type: RollingUpdate
+    template:
+      metadata:
+        annotations:
+          container.apparmor.security.beta.kubernetes.io/nginx: localhost/custom-nginx
+        creationTimestamp: null
+        labels:
+          app: alpha-xyz
+      spec:
+        containers:
+        - image: nginx:alpine
+          imagePullPolicy: IfNotPresent
+          name: nginx
+          resources: {}
+          terminationMessagePath: /dev/termination-log
+          terminationMessagePolicy: File
+          volumeMounts:
+          - mountPath: /usr/share/nginx/html
+            name: data-volume
+        dnsPolicy: ClusterFirst
+        restartPolicy: Always
+        schedulerName: default-scheduler
+        securityContext: {}
+        terminationGracePeriodSeconds: 30
+        volumes:
+        - name: data-volume
+          persistentVolumeClaim:
+            claimName: alpha-pvc
+  status:
+    availableReplicas: 1
+    conditions:
+    - lastTransitionTime: "2023-03-21T07:07:12Z"
+      lastUpdateTime: "2023-03-21T07:07:12Z"
+      message: Deployment has minimum availability.
+      reason: MinimumReplicasAvailable
+      status: "True"
+      type: Available
+    - lastTransitionTime: "2023-03-21T07:07:09Z"
+      lastUpdateTime: "2023-03-21T07:30:18Z"
+      message: ReplicaSet "alpha-xyz-68cbd57f9" has successfully progressed.
+      reason: NewReplicaSetAvailable
+      status: "True"
+      type: Progressing
+    observedGeneration: 2
+    readyReplicas: 1
+    replicas: 1
+    updatedReplicas: 1
+kind: List
+metadata:
+  resourceVersion: ""
+  selfLink: ""
+
+
+root@controlplane ~ ✖ kubectl get deploy -n alpha
+NAME        READY   UP-TO-DATE   AVAILABLE   AGE
+alpha-xyz   1/1     1            1           12m
+
+Step 7:
+--------
+
+Create a NetworkPolicy called 'restrict-inbound' in the 'alpha' namespace
+
+Policy Type = 'Ingress'
+
+Inbound access only allowed from the pod called 'middleware' with label 'app=middleware'
+
+Inbound access only allowed to TCP port 80 on pods matching the policy
+
+7.1. Now we setup the networkpolicy to deployment.
+
+root@controlplane ~ ➜  cat net.yml 
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: restrict-inbound
+  namespace: alpha
+spec:
+  podSelector:
+    matchLabels:
+      app: alpha-xyz
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: middleware
+      ports:
+        - protocol: TCP
+          port: 80
+
+root@controlplane ~ ➜  
+
+root@controlplane ~ ➜  kubectl create -f net.yml 
+networkpolicy.networking.k8s.io/restrict-inbound created
+
+root@controlplane ~ ✖ kubectl get netpol -n alpha
+NAME               POD-SELECTOR    AGE
+restrict-inbound   app=alpha-xyz   19s
+
+root@controlplane ~ ➜  
